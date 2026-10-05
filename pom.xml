@@ -23,6 +23,7 @@
         <module>tooling-string-utils</module>
         <module>tooling-feature-pack</module>
         <module>tooling-pairwise</module>
+        <module>tooling-sbom-verification</module>
     </modules>
 
     <properties>
