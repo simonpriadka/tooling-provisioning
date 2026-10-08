@@ -22,7 +22,6 @@
     <properties>
         <version.cyclonedx-core-java>13.1.0</version.cyclonedx-core-java>
         <version.snakeyaml>2.3</version.snakeyaml>
-        <version.maven-shade-plugin>3.6.0</version.maven-shade-plugin>
     </properties>
 
     <dependencies>
@@ -52,32 +51,5 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <!-- Fat JAR so the checker can be run standalone -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>${version.maven-shade-plugin}</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>org.wildfly.sbom.SbomChecker</mainClass>
-                                </transformer>
-                            </transformers>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>
 
 </project>

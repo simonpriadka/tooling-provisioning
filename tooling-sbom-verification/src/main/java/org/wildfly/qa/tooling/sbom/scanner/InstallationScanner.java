@@ -2,7 +2,7 @@
  * Copyright The WildFly Authors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.wildfly.sbom.scanner;
+package org.wildfly.qa.tooling.sbom.scanner;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -49,8 +49,8 @@ public class InstallationScanner {
      * @throws IOException if the file tree cannot be walked
      */
     public List<InstalledArtifact> scan() throws IOException {
-        List<InstalledArtifact> result = new ArrayList<>();
-        Path excluded = installRoot.resolve(".installation").toAbsolutePath().normalize();
+        var result = new ArrayList<InstalledArtifact>();
+        var excluded = installRoot.resolve(".installation").toAbsolutePath().normalize();
 
         Files.walkFileTree(installRoot, new SimpleFileVisitor<>() {
             @Override
