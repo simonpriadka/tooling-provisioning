@@ -4,6 +4,7 @@
  */
 package org.wildfly.qa.tooling.sbom;
 
+import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
 import org.cyclonedx.parsers.JsonParser;
 import org.wildfly.qa.tooling.sbom.component.ComponentKind;
@@ -11,6 +12,7 @@ import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
 import org.wildfly.qa.tooling.sbom.manifest.Manifest;
 import org.wildfly.qa.tooling.sbom.manifest.ManifestReader;
 import org.wildfly.qa.tooling.sbom.print.SbomPrinter;
+import org.wildfly.qa.tooling.sbom.result.BootableJarCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.CheckResult;
 import org.wildfly.qa.tooling.sbom.result.SbomCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.SbomCheckResult;
@@ -19,6 +21,7 @@ import org.wildfly.qa.tooling.sbom.scanner.InstalledArtifact;
 import org.wildfly.qa.tooling.sbom.scanner.InstallationScanner;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -29,6 +32,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * WildFly SBOM checker.
@@ -93,6 +98,48 @@ public class SbomChecker {
     }
 
     /**
+     * Checks a bootable JAR installation by running two phases:
+     * <ol>
+     *   <li>Phase 1 — parses {@code META-INF/sbom/sbom.cdx.json} and checks only the CPE header
+     *       (CHECKs 2–4 pass vacuously: no JARs on disk, no manifest).</li>
+     *   <li>Phase 2 — unzips {@code wildfly.zip} to a temporary directory and runs all four
+     *       checks against the extracted WildFly installation, then deletes the temp dir.</li>
+     * </ol>
+     *
+     * @param bootableRoot path to the extracted bootable JAR directory (the directory that
+     *                     contains {@code META-INF/}, {@code wildfly.zip}, etc.)
+     * @return the combined bootable JAR check details; never {@code null}
+     * @throws IllegalArgumentException if {@code META-INF/sbom/sbom.cdx.json} or
+     *                                  {@code wildfly.zip} is not found under {@code bootableRoot}
+     * @throws IOException if any file cannot be read or extracted
+     * @throws org.cyclonedx.exception.ParseException if either SBOM file is malformed
+     */
+    public static BootableJarCheckDetails checkBootableJar(Path bootableRoot) throws Exception {
+        var outerSbom = bootableRoot.resolve("META-INF/sbom/sbom.cdx.json");
+        if (!Files.exists(outerSbom)) {
+            return BootableJarCheckDetails.noSbom(bootableRoot);
+        }
+        var wildflyZip = bootableRoot.resolve("wildfly.zip");
+        if (!Files.exists(wildflyZip)) {
+            throw new IllegalArgumentException(
+                    "wildfly.zip not found in: " + bootableRoot);
+        }
+
+        // Phase 1 — outer SBOM (CPE check only; other checks pass vacuously)
+        var outerDetails = checkWithDetails(bootableRoot.resolve("META-INF/sbom"));
+
+        // Phase 2 — unzip wildfly.zip, run full check, clean up
+        var tempDir = Files.createTempDirectory("wildfly-sbom-check-");
+        try {
+            unzip(wildflyZip, tempDir);
+            var innerDetails = checkWithDetails(tempDir);
+            return new BootableJarCheckDetails(outerDetails, innerDetails);
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    /**
      * Runs all SBOM checks, optionally printing a summary to {@code System.out},
      * and returns a {@link SbomCheckDetails} containing both the check outcomes
      * and all intermediate data.
@@ -146,18 +193,34 @@ public class SbomChecker {
                 .collect(Collectors.toSet());
         var parentIndex = buildParentIndex(bom.getComponents());
 
+        var cpeCheck = checkMetadataCpe(bom);
         var sbomVsDisk = checkSbomVsDisk(mavenComponents, installedJars, installRoot);
         var diskVsSbom = checkDiskVsSbom(installedJars, mavenComponents);
         var sbomVsManifest = checkSbomVsManifest(mavenComponents, manifest);
         var shadedResult = collectShadedArtifacts(mavenComponents, diskFileNames, parentIndex, manifest);
 
-        var result = new SbomCheckResult(sbomVsDisk, diskVsSbom, sbomVsManifest, false);
+        var result = new SbomCheckResult(cpeCheck, sbomVsDisk, diskVsSbom, sbomVsManifest, false);
         return new SbomCheckDetails(result, installRoot, bom, mavenComponents, installedJars, manifest, shadedResult);
     }
 
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * CHECK 1 — verifies that {@code metadata.component.cpe} is present and non-blank.
+     */
+    static CheckResult checkMetadataCpe(Bom bom) {
+        var meta = bom.getMetadata();
+        if (meta == null || meta.getComponent() == null) {
+            return new CheckResult(List.of("No metadata.component defined in SBOM"));
+        }
+        var cpe = meta.getComponent().getCpe();
+        if (cpe == null || cpe.isBlank()) {
+            return new CheckResult(List.of("metadata.component.cpe is missing or blank"));
+        }
+        return new CheckResult(Collections.emptyList());
+    }
 
     /**
      * Builds a map from each maven component's purl to the purl of its nearest
@@ -293,4 +356,38 @@ public class SbomChecker {
         return new ShadedResult(Collections.unmodifiableMap(grouped));
     }
 
+    // -----------------------------------------------------------------------
+    // Bootable JAR helpers
+    // -----------------------------------------------------------------------
+
+    private static void unzip(Path zipFile, Path targetDir) throws IOException {
+        try (var zf = new ZipFile(zipFile.toFile())) {
+            var entries = zf.entries();
+            while (entries.hasMoreElements()) {
+                var entry = (ZipEntry) entries.nextElement();
+                var entryPath = targetDir.resolve(entry.getName()).normalize();
+                if (!entryPath.startsWith(targetDir)) {
+                    throw new IOException("ZIP entry outside target directory: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(entryPath);
+                } else {
+                    Files.createDirectories(entryPath.getParent());
+                    try (InputStream in = zf.getInputStream(entry)) {
+                        Files.copy(in, entryPath);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(p -> {
+                        try { Files.delete(p); } catch (IOException ignored) {}
+                    });
+        }
+    }
 }

@@ -8,6 +8,7 @@ import org.cyclonedx.model.Component;
 import org.wildfly.qa.tooling.sbom.component.ComponentKind;
 import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
 import org.wildfly.qa.tooling.sbom.manifest.Manifest;
+import org.wildfly.qa.tooling.sbom.result.BootableJarCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.CheckResult;
 import org.wildfly.qa.tooling.sbom.result.SbomCheckDetails;
 
@@ -32,10 +33,52 @@ public final class SbomPrinter {
      * Prints a human-readable summary of {@code details} to {@code System.out}.
      *
      * @param details the full check details returned by
-     *                {@link org.wildfly.sbom.SbomChecker#checkWithDetails()}
+     *                {@link org.wildfly.qa.tooling.sbom.SbomChecker#checkWithDetails(java.nio.file.Path)}
      */
     public static void print(SbomCheckDetails details) {
         print(details, System.out);
+    }
+
+    /**
+     * Prints a human-readable summary of {@code bootableDetails} to {@code System.out}.
+     *
+     * @param bootableDetails the full bootable JAR check details returned by
+     *                        {@link org.wildfly.qa.tooling.sbom.SbomChecker#checkBootableJar(java.nio.file.Path)}
+     */
+    public static void print(BootableJarCheckDetails bootableDetails) {
+        print(bootableDetails, System.out);
+    }
+
+    /**
+     * Prints a human-readable summary of {@code bootableDetails} to the given {@link PrintStream}.
+     *
+     * @param bootableDetails the full bootable JAR check details
+     * @param out             the stream to write to
+     */
+    public static void print(BootableJarCheckDetails bootableDetails, PrintStream out) {
+        out.println("╔═ BOOTABLE JAR CHECK");
+        out.println("║  Bootable JAR root : " + bootableDetails.outerResult().installRoot()
+                .getParent().getParent());
+        out.println();
+        out.println("╠═ PHASE 1 — Outer SBOM (META-INF/sbom/sbom.cdx.json)");
+        print(bootableDetails.outerResult(), out);
+
+        out.println("╠═ PHASE 2 — Inner WildFly installation (from wildfly.zip)");
+        print(bootableDetails.innerResult(), out);
+
+        out.println("╠═ CPE CROSS-CHECK");
+        var cpe = bootableDetails.getCpe();
+        if (cpe != null) {
+            out.println("║  OK – CPEs match: " + cpe);
+        } else {
+            var outerCpe = bootableDetails.outerResult().getCpe();
+            var innerCpe = bootableDetails.innerResult().getCpe();
+            out.println("║  FAILED");
+            out.println("║    outer : " + (outerCpe != null ? outerCpe : "(none)"));
+            out.println("║    inner : " + (innerCpe != null ? innerCpe : "(none)"));
+        }
+        out.println();
+        out.println(bootableDetails.passed() ? "RESULT: ALL CHECKS PASSED" : "RESULT: SOME CHECKS FAILED");
     }
 
     /**
@@ -77,15 +120,16 @@ public final class SbomPrinter {
         printSbomBreakdown(bom.getComponents(), mavenComponents,
                 ComponentUtils.countByPurlScheme(bom.getComponents(), "pkg:npm/"), out);
 
-        printResult("CHECK 1 — SBOM components present on disk", result.sbomVsDisk(), out);
-        printResult("CHECK 2 — Disk JARs declared in SBOM", result.diskVsSbom(), out);
+        printResult("CHECK 1 — CPE present in metadata.component", result.cpeCheck(), out);
+        printResult("CHECK 2 — SBOM components present on disk", result.sbomVsDisk(), out);
+        printResult("CHECK 3 — Disk JARs declared in SBOM", result.diskVsSbom(), out);
 
         if (!manifest.isEmpty()) {
-            printResult("CHECK 3 — SBOM versions match manifest.yaml", result.sbomVsManifest(), out);
+            printResult("CHECK 4 — SBOM versions match manifest.yaml", result.sbomVsManifest(), out);
             printNotInManifest("INFO — SBOM components not present in manifest.yaml",
                     mavenComponents, manifest, shadedResult.totalArtifacts(), out);
         } else {
-            printSkipped("CHECK 3 — SBOM versions match manifest.yaml",
+            printSkipped("CHECK 4 — SBOM versions match manifest.yaml",
                     "no .installation/manifest.yaml found in this installation", out);
         }
 

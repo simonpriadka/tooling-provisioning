@@ -4,8 +4,10 @@
  */
 package org.wildfly.qa.tooling.sbom;
 
+import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
 import org.cyclonedx.model.Evidence;
+import org.cyclonedx.model.Metadata;
 import org.cyclonedx.model.component.evidence.Identity;
 import org.cyclonedx.model.component.evidence.Method;
 import org.cyclonedx.model.component.evidence.Occurrence;
@@ -194,6 +196,53 @@ class SbomCheckerTest {
         assertEquals(ComponentKind.REGULAR_JAR, ComponentUtils.componentKind(c));
     }
 
+    // ---- checkMetadataCpe -------------------------------------------------
+
+    @Test
+    void checkMetadataCpe_cpePresent_passes() {
+        var bom = new Bom();
+        var meta = new Metadata();
+        var comp = new Component();
+        comp.setCpe("cpe:/a:redhat:jboss_enterprise_application_platform:8.1");
+        meta.setComponent(comp);
+        bom.setMetadata(meta);
+
+        var result = SbomChecker.checkMetadataCpe(bom);
+        assertTrue(result.passed());
+        assertTrue(result.issues().isEmpty());
+    }
+
+    @Test
+    void checkMetadataCpe_cpeBlank_fails() {
+        var bom = new Bom();
+        var meta = new Metadata();
+        var comp = new Component();
+        comp.setCpe("   ");
+        meta.setComponent(comp);
+        bom.setMetadata(meta);
+
+        var result = SbomChecker.checkMetadataCpe(bom);
+        assertFalse(result.passed());
+        assertEquals(1, result.issues().size());
+    }
+
+    @Test
+    void checkMetadataCpe_cpeNull_fails() {
+        var bom = new Bom();
+        var meta = new Metadata();
+        meta.setComponent(new Component());
+        bom.setMetadata(meta);
+
+        var result = SbomChecker.checkMetadataCpe(bom);
+        assertFalse(result.passed());
+    }
+
+    @Test
+    void checkMetadataCpe_noMetadata_fails() {
+        var result = SbomChecker.checkMetadataCpe(new Bom());
+        assertFalse(result.passed());
+    }
+
     // ---- check() API -------------------------------------------------------
 
     @Test
@@ -208,6 +257,8 @@ class SbomCheckerTest {
     void check_noSbomFile_checkResultsAreEmpty(@TempDir Path installRoot) throws Exception {
         var result = SbomChecker.check(installRoot);
 
+        assertTrue(result.cpeCheck().passed());
+        assertTrue(result.cpeCheck().issues().isEmpty());
         assertTrue(result.sbomVsDisk().passed());
         assertTrue(result.diskVsSbom().passed());
         assertTrue(result.sbomVsDisk().issues().isEmpty());

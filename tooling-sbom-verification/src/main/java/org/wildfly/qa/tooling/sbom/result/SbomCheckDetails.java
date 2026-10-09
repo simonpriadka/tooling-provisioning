@@ -13,7 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * The full context produced by {@link org.wildfly.sbom.SbomChecker#checkWithDetails(Path)}.
+ * The full context produced by {@link org.wildfly.qa.tooling.sbom.SbomChecker#checkWithDetails(Path)}.
  *
  * <p>Contains both the lean {@link SbomCheckResult} (check outcomes only) and all
  * intermediate data collected during the check — useful for printing, diagnostics,
@@ -59,7 +59,7 @@ public final class SbomCheckDetails {
                 Manifest.empty(), null);
     }
 
-    /** The lean check result — pass/fail outcomes for all three checks. */
+    /** The lean check result — pass/fail outcomes for all four checks. */
     public SbomCheckResult result() { return result; }
 
     /** Convenience delegation — equivalent to {@code result().passed()}. */
@@ -73,6 +73,20 @@ public final class SbomCheckDetails {
 
     /** The parsed BOM, or {@code null} when {@link #isNoSbom()} is {@code true}. */
     public Bom bom() { return bom; }
+
+    /**
+     * The CPE string from {@code metadata.component.cpe}, or {@code null} when the
+     * SBOM was not found, metadata is absent, or the CPE field is blank.
+     */
+    public String getCpe() {
+        if (bom == null) return null;
+        var meta = bom.getMetadata();
+        if (meta == null) return null;
+        var comp = meta.getComponent();
+        if (comp == null) return null;
+        var cpe = comp.getCpe();
+        return (cpe != null && !cpe.isBlank()) ? cpe : null;
+    }
 
     /** All maven components collected from the SBOM component tree. */
     public List<Component> mavenComponents() { return mavenComponents; }
