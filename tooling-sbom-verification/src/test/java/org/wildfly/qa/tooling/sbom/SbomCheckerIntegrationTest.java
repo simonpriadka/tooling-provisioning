@@ -102,12 +102,12 @@ class SbomCheckerIntegrationTest {
 
     @Test
     void manifestIsPresent() {
-        assertFalse(details.manifest().isEmpty(), "Expected manifest.yaml to be present");
+        assertFalse(details.manifest().getStreams().isEmpty(), "Expected manifest.yaml to be present");
     }
 
     @Test
     void manifestEntryCount() {
-        assertEquals(672, details.manifest().size(),
+        assertEquals(672, details.manifest().getStreams().size(),
                 "Expected 672 manifest entries");
     }
 
@@ -191,7 +191,7 @@ class SbomCheckerIntegrationTest {
 
         @Test
         void innerManifestIsPresent() {
-            assertFalse(bootableDetails.innerResult().manifest().isEmpty(),
+            assertFalse(bootableDetails.innerResult().manifest().getStreams().isEmpty(),
                     "Expected manifest.yaml to be present in inner wildfly");
         }
 

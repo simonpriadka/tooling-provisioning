@@ -19,24 +19,17 @@
         Based on https://github.com/jfdenise/wildfly-sbom-checker.
     </description>
 
-    <properties>
-        <version.cyclonedx-core-java>13.1.0</version.cyclonedx-core-java>
-        <version.snakeyaml>2.3</version.snakeyaml>
-    </properties>
-
     <dependencies>
         <!-- CycloneDX SBOM parser / model -->
         <dependency>
             <groupId>org.cyclonedx</groupId>
             <artifactId>cyclonedx-core-java</artifactId>
-            <version>${version.cyclonedx-core-java}</version>
         </dependency>
 
-        <!-- YAML parsing for manifest.yaml -->
+        <!-- Channel manifest model and YAML parsing for manifest.yaml -->
         <dependency>
-            <groupId>org.yaml</groupId>
-            <artifactId>snakeyaml</artifactId>
-            <version>${version.snakeyaml}</version>
+            <groupId>org.wildfly.channel</groupId>
+            <artifactId>channel-core</artifactId>
         </dependency>
 
         <!-- Unit tests -->

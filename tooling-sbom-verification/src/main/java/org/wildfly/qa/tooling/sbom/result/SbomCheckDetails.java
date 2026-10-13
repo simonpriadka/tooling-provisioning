@@ -6,7 +6,7 @@ package org.wildfly.qa.tooling.sbom.result;
 
 import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
-import org.wildfly.qa.tooling.sbom.manifest.Manifest;
+import org.wildfly.channel.ChannelManifest;
 import org.wildfly.qa.tooling.sbom.scanner.InstalledArtifact;
 
 import java.nio.file.Path;
@@ -25,12 +25,15 @@ import java.util.List;
  */
 public final class SbomCheckDetails {
 
+    /** Manifest with no streams, used when no {@code manifest.yaml} was found. */
+    public static final ChannelManifest EMPTY_MANIFEST = new ChannelManifest(null, null, null, List.of());
+
     private final SbomCheckResult result;
     private final Path installRoot;
     private final Bom bom;
     private final List<Component> mavenComponents;
     private final List<InstalledArtifact> installedJars;
-    private final Manifest manifest;
+    private final ChannelManifest manifest;
     private final ShadedResult shadedResult;
 
     public SbomCheckDetails(
@@ -39,7 +42,7 @@ public final class SbomCheckDetails {
             Bom bom,
             List<Component> mavenComponents,
             List<InstalledArtifact> installedJars,
-            Manifest manifest,
+            ChannelManifest manifest,
             ShadedResult shadedResult) {
         this.result = result;
         this.installRoot = installRoot;
@@ -56,7 +59,7 @@ public final class SbomCheckDetails {
                 SbomCheckResult.noSbom(),
                 installRoot, null,
                 List.of(), List.of(),
-                Manifest.empty(), null);
+                EMPTY_MANIFEST, null);
     }
 
     /** The lean check result — pass/fail outcomes for all four checks. */
@@ -96,9 +99,9 @@ public final class SbomCheckDetails {
 
     /**
      * The parsed {@code manifest.yaml}.
-     * {@link Manifest#isEmpty()} is {@code true} when no manifest was found.
+     * {@link ChannelManifest#getStreams()} is empty when no manifest was found.
      */
-    public Manifest manifest() { return manifest; }
+    public ChannelManifest manifest() { return manifest; }
 
     /**
      * Shaded/POM-derived artifact grouping.

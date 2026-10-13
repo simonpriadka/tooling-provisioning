@@ -7,10 +7,10 @@ package org.wildfly.qa.tooling.sbom;
 import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
 import org.cyclonedx.parsers.JsonParser;
+import org.wildfly.channel.ChannelManifest;
+import org.wildfly.channel.ChannelManifestMapper;
 import org.wildfly.qa.tooling.sbom.component.ComponentKind;
 import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
-import org.wildfly.qa.tooling.sbom.manifest.Manifest;
-import org.wildfly.qa.tooling.sbom.manifest.ManifestReader;
 import org.wildfly.qa.tooling.sbom.print.SbomPrinter;
 import org.wildfly.qa.tooling.sbom.result.BootableJarCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.CheckResult;
@@ -185,7 +185,7 @@ public class SbomChecker {
         var installedJars = new InstallationScanner(installRoot).scan();
 
         // ---- 3. Read manifest.yaml (optional) --------------------------
-        var manifest = ManifestReader.read(installRoot);
+        var manifest = readManifest(installRoot);
 
         // ---- Run checks ------------------------------------------------
         var diskFileNames = installedJars.stream()
@@ -206,6 +206,18 @@ public class SbomChecker {
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * Reads {@code .installation/manifest.yaml}; returns
+     * {@link SbomCheckDetails#EMPTY_MANIFEST} when the file is absent.
+     */
+    private static ChannelManifest readManifest(Path installRoot) throws IOException {
+        var manifestPath = installRoot.resolve(".installation").resolve("manifest.yaml");
+        if (!Files.exists(manifestPath)) {
+            return SbomCheckDetails.EMPTY_MANIFEST;
+        }
+        return ChannelManifestMapper.fromString(Files.readString(manifestPath));
+    }
 
     /**
      * CHECK 1 — verifies that {@code metadata.component.cpe} is present and non-blank.
@@ -307,16 +319,17 @@ public class SbomChecker {
     }
 
     private static CheckResult checkSbomVsManifest(
-            List<Component> sbomComponents, Manifest manifest) {
+            List<Component> sbomComponents, ChannelManifest manifest) {
 
-        if (manifest.isEmpty()) {
+        if (manifest.getStreams().isEmpty()) {
             return new CheckResult(Collections.emptyList());
         }
         var issues = sbomComponents.stream()
                 .filter(c -> ComponentUtils.componentKind(c) != ComponentKind.POM_DERIVED)
                 .flatMap(c -> {
                     String coord = c.getGroup() + ":" + c.getName();
-                    return manifest.version(c.getGroup(), c.getName())
+                    return manifest.findStreamFor(c.getGroup(), c.getName())
+                            .map(org.wildfly.channel.Stream::getVersion)
                             .map(v -> v.equals(c.getVersion())
                                     ? Stream.<String>empty()
                                     : Stream.of("VERSION MISMATCH " + coord
@@ -335,7 +348,7 @@ public class SbomChecker {
 
     private static ShadedResult collectShadedArtifacts(
             List<Component> allMavenComponents, Set<String> diskFileNames,
-            Map<String, String> parentIndex, Manifest manifest) {
+            Map<String, String> parentIndex, ChannelManifest manifest) {
 
         var grouped = new java.util.TreeMap<String, List<String>>();
         allMavenComponents.stream()
@@ -345,7 +358,8 @@ public class SbomChecker {
                     var fatJar = FAT_JAR_NAMES.get(c.getName());
                     return fatJar == null || !diskFileNames.contains(Path.of(fatJar).getFileName().toString());
                 })
-                .filter(c -> manifest.version(c.getGroup(), c.getName())
+                .filter(c -> manifest.findStreamFor(c.getGroup(), c.getName())
+                        .map(org.wildfly.channel.Stream::getVersion)
                         .map(v -> !v.equals(c.getVersion()))
                         .orElse(true))
                 .forEach(c -> {

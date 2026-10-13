@@ -54,6 +54,8 @@
         <version.org.jboss.galleon>5.2.0.Final</version.org.jboss.galleon>
         <!-- Community WildFly version used for integration tests (e.g. ServerProcess IT) -->
         <version.wildfly.test>41.0.1.Final</version.wildfly.test>
+        <!-- Must stay on the json-schema-validator 1.5.x line (12.1.x) to remain compatible with channel-core -->
+        <version.cyclonedx-core-java>12.1.0</version.cyclonedx-core-java>
     </properties>
 
     <dependencyManagement>
@@ -181,6 +183,12 @@
                 <groupId>org.jboss.galleon</groupId>
                 <artifactId>galleon-maven-universe</artifactId>
                 <version>${version.org.jboss.galleon}</version>
+            </dependency>
+            <!-- CycloneDX SBOM parser / model -->
+            <dependency>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-core-java</artifactId>
+                <version>${version.cyclonedx-core-java}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

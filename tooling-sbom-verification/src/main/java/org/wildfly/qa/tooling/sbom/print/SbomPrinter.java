@@ -5,9 +5,10 @@
 package org.wildfly.qa.tooling.sbom.print;
 
 import org.cyclonedx.model.Component;
+import org.wildfly.channel.ChannelManifest;
+import org.wildfly.channel.Stream;
 import org.wildfly.qa.tooling.sbom.component.ComponentKind;
 import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
-import org.wildfly.qa.tooling.sbom.manifest.Manifest;
 import org.wildfly.qa.tooling.sbom.result.BootableJarCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.CheckResult;
 import org.wildfly.qa.tooling.sbom.result.SbomCheckDetails;
@@ -114,7 +115,7 @@ public final class SbomPrinter {
         out.println("Maven components in SBOM : " + mavenComponents.size() + sbomAnnotation);
         out.println("JARs found on disk       : " + installedJars.size());
         out.println("Manifest entries         : "
-                + (manifest.isEmpty() ? "n/a (no manifest.yaml)" : manifest.size()));
+                + (manifest.getStreams().isEmpty() ? "n/a (no manifest.yaml)" : manifest.getStreams().size()));
         out.println();
 
         printSbomBreakdown(bom.getComponents(), mavenComponents,
@@ -124,7 +125,7 @@ public final class SbomPrinter {
         printResult("CHECK 2 — SBOM components present on disk", result.sbomVsDisk(), out);
         printResult("CHECK 3 — Disk JARs declared in SBOM", result.diskVsSbom(), out);
 
-        if (!manifest.isEmpty()) {
+        if (!manifest.getStreams().isEmpty()) {
             printResult("CHECK 4 — SBOM versions match manifest.yaml", result.sbomVsManifest(), out);
             printNotInManifest("INFO — SBOM components not present in manifest.yaml",
                     mavenComponents, manifest, shadedResult.totalArtifacts(), out);
@@ -144,13 +145,14 @@ public final class SbomPrinter {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    private static String buildSbomAnnotation(List<Component> mavenComponents, Manifest manifest) {
-        if (manifest.isEmpty()) return "";
+    private static String buildSbomAnnotation(List<Component> mavenComponents, ChannelManifest manifest) {
+        if (manifest.getStreams().isEmpty()) return "";
         var notPresent = mavenComponents.stream()
-                .filter(c -> !manifest.contains(c.getGroup(), c.getName()))
+                .filter(c -> manifest.findStreamFor(c.getGroup(), c.getName()).isEmpty())
                 .count();
         var wrongVersion = mavenComponents.stream()
-                .filter(c -> manifest.version(c.getGroup(), c.getName())
+                .filter(c -> manifest.findStreamFor(c.getGroup(), c.getName())
+                        .map(Stream::getVersion)
                         .map(v -> !v.equals(c.getVersion()))
                         .orElse(false))
                 .count();
@@ -212,7 +214,7 @@ public final class SbomPrinter {
     }
 
     private static void printNotInManifest(String title, List<Component> mavenComponents,
-            Manifest manifest, int shadedTotal, PrintStream out) {
+            ChannelManifest manifest, int shadedTotal, PrintStream out) {
 
         var sbomVersionsByGa = new java.util.LinkedHashMap<String, List<String>>();
         for (var c : mavenComponents) {
@@ -230,7 +232,8 @@ public final class SbomPrinter {
             var ga = entry.getKey();
             var versions = entry.getValue();
             var colon = ga.indexOf(':');
-            var manifestVersion = manifest.version(ga.substring(0, colon), ga.substring(colon + 1));
+            var manifestVersion = manifest.findStreamFor(ga.substring(0, colon), ga.substring(colon + 1))
+                    .map(Stream::getVersion);
             if (manifestVersion.isEmpty()) {
                 var shadedCount = versions.stream().filter(v -> v.endsWith("(shaded)")).count();
                 notPresentArtifacts += (int) shadedCount;
