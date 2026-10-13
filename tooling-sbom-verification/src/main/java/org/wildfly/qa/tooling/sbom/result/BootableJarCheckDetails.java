@@ -93,8 +93,8 @@ public final class BootableJarCheckDetails {
     // -----------------------------------------------------------------------
 
     private static CheckResult buildCpeCrossCheck(SbomCheckDetails outer, SbomCheckDetails inner) {
-        var outerCpe = outer.getCpe();
-        var innerCpe = inner.getCpe();
+        String outerCpe = outer.getCpe();
+        String innerCpe = inner.getCpe();
         if (outerCpe == null) {
             return new CheckResult(List.of("Outer SBOM (META-INF/sbom/sbom.cdx.json) has no CPE"));
         }

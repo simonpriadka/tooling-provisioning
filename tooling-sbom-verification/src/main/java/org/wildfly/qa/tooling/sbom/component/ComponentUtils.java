@@ -5,6 +5,8 @@
 package org.wildfly.qa.tooling.sbom.component;
 
 import org.cyclonedx.model.Component;
+import org.cyclonedx.model.Evidence;
+import org.cyclonedx.model.component.evidence.Identity;
 import org.cyclonedx.model.component.evidence.Method;
 import org.cyclonedx.model.component.evidence.Occurrence;
 
@@ -34,20 +36,20 @@ public final class ComponentUtils {
      * </ul>
      */
     public static ComponentKind componentKind(Component c) {
-        var ev = c.getEvidence();
+        Evidence ev = c.getEvidence();
         if (ev == null) return ComponentKind.REGULAR_JAR;
 
-        var occurrences = ev.getOccurrences();
+        List<Occurrence> occurrences = ev.getOccurrences();
         if (occurrences != null && !occurrences.isEmpty()) {
-            var allLib = occurrences.stream()
+            boolean allLib = occurrences.stream()
                     .allMatch(o -> o.getLocation() != null && o.getLocation().endsWith("/lib"));
             return allLib ? ComponentKind.NATIVE_LIB : ComponentKind.REGULAR_JAR;
         }
 
-        var identities = ev.getIdentities();
+        List<Identity> identities = ev.getIdentities();
         if (identities != null && !identities.isEmpty()) {
-            var allPomDerived = identities.stream().allMatch(id -> {
-                var methods = id.getMethods();
+            boolean allPomDerived = identities.stream().allMatch(id -> {
+                List<Method> methods = id.getMethods();
                 if (methods == null || methods.isEmpty()) return false;
                 return methods.stream().allMatch(m ->
                         m.getTechnique() == Method.Technique.MANIFEST_ANALYSIS
@@ -63,7 +65,7 @@ public final class ComponentUtils {
      * occurrence, or an empty {@link Optional} if none is found.
      */
     public static Optional<String> nativeLibDir(Component c) {
-        var ev = c.getEvidence();
+        Evidence ev = c.getEvidence();
         if (ev == null || ev.getOccurrences() == null) return Optional.empty();
         return ev.getOccurrences().stream()
                 .map(Occurrence::getLocation)
@@ -76,7 +78,7 @@ public final class ComponentUtils {
      * {@code <name>-<version>[-<classifier>].jar}.
      */
     public static String expectedJarFileName(Component c) {
-        var versionSuffix = purlClassifier(c.getPurl())
+        String versionSuffix = purlClassifier(c.getPurl())
                 .filter(cl -> !cl.isBlank())
                 .map(cl -> c.getVersion() + "-" + cl)
                 .orElse(c.getVersion());
@@ -88,9 +90,9 @@ public final class ComponentUtils {
      * {@code jar} (e.g. {@code type=txt}).
      */
     public static boolean isNonJarType(Component c) {
-        var purl = c.getPurl();
+        String purl = c.getPurl();
         if (purl == null) return false;
-        var q = purl.indexOf('?');
+        int q = purl.indexOf('?');
         if (q < 0) return false;
         return Arrays.stream(purl.substring(q + 1).split("&"))
                 .anyMatch(p -> p.startsWith("type=") && !p.equals("type=jar"));
@@ -125,7 +127,7 @@ public final class ComponentUtils {
      */
     public static Optional<String> purlClassifier(String purl) {
         if (purl == null) return Optional.empty();
-        var q = purl.indexOf('?');
+        int q = purl.indexOf('?');
         if (q < 0) return Optional.empty();
         return Arrays.stream(purl.substring(q + 1).split("&"))
                 .filter(p -> p.startsWith("classifier="))

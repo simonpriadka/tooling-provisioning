@@ -49,8 +49,8 @@ public class InstallationScanner {
      * @throws IOException if the file tree cannot be walked
      */
     public List<InstalledArtifact> scan() throws IOException {
-        var result = new ArrayList<InstalledArtifact>();
-        var excluded = installRoot.resolve(".installation").toAbsolutePath().normalize();
+        List<InstalledArtifact> result = new ArrayList<>();
+        Path excluded = installRoot.resolve(".installation").toAbsolutePath().normalize();
 
         Files.walkFileTree(installRoot, new SimpleFileVisitor<>() {
             @Override

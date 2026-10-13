@@ -34,7 +34,7 @@ public final class SbomCheckResult {
 
     /** Returns an empty result representing the case where no {@code sbom.cdx.json} was found. */
     public static SbomCheckResult noSbom() {
-        var empty = new CheckResult(Collections.emptyList());
+        CheckResult empty = new CheckResult(Collections.emptyList());
         return new SbomCheckResult(empty, empty, empty, empty, true);
     }
 

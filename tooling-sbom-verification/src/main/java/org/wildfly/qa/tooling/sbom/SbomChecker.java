@@ -6,6 +6,7 @@ package org.wildfly.qa.tooling.sbom;
 
 import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
+import org.cyclonedx.model.Metadata;
 import org.cyclonedx.parsers.JsonParser;
 import org.wildfly.channel.ChannelManifest;
 import org.wildfly.channel.ChannelManifestMapper;
@@ -20,12 +21,14 @@ import org.wildfly.qa.tooling.sbom.result.ShadedResult;
 import org.wildfly.qa.tooling.sbom.scanner.InstalledArtifact;
 import org.wildfly.qa.tooling.sbom.scanner.InstallationScanner;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -115,24 +118,24 @@ public class SbomChecker {
      * @throws org.cyclonedx.exception.ParseException if either SBOM file is malformed
      */
     public static BootableJarCheckDetails checkBootableJar(Path bootableRoot) throws Exception {
-        var outerSbom = bootableRoot.resolve("META-INF/sbom/sbom.cdx.json");
+        Path outerSbom = bootableRoot.resolve("META-INF/sbom/sbom.cdx.json");
         if (!Files.exists(outerSbom)) {
             return BootableJarCheckDetails.noSbom(bootableRoot);
         }
-        var wildflyZip = bootableRoot.resolve("wildfly.zip");
+        Path wildflyZip = bootableRoot.resolve("wildfly.zip");
         if (!Files.exists(wildflyZip)) {
             throw new IllegalArgumentException(
                     "wildfly.zip not found in: " + bootableRoot);
         }
 
         // Phase 1 — outer SBOM (CPE check only; other checks pass vacuously)
-        var outerDetails = checkWithDetails(bootableRoot.resolve("META-INF/sbom"));
+        SbomCheckDetails outerDetails = checkWithDetails(bootableRoot.resolve("META-INF/sbom"));
 
         // Phase 2 — unzip wildfly.zip, run full check, clean up
-        var tempDir = Files.createTempDirectory("wildfly-sbom-check-");
+        Path tempDir = Files.createTempDirectory("wildfly-sbom-check-");
         try {
             unzip(wildflyZip, tempDir);
-            var innerDetails = checkWithDetails(tempDir);
+            SbomCheckDetails innerDetails = checkWithDetails(tempDir);
             return new BootableJarCheckDetails(outerDetails, innerDetails);
         } finally {
             deleteRecursively(tempDir);
@@ -152,7 +155,7 @@ public class SbomChecker {
      * @throws org.cyclonedx.exception.ParseException if the SBOM file is malformed
      */
     public static SbomCheckDetails checkWithDetails(Path installRoot, boolean print) throws Exception {
-        var details = checkWithDetails(installRoot);
+        SbomCheckDetails details = checkWithDetails(installRoot);
         if (print) SbomPrinter.print(details);
         return details;
     }
@@ -169,37 +172,37 @@ public class SbomChecker {
      */
     public static SbomCheckDetails checkWithDetails(Path installRoot) throws Exception {
         // ---- 1. Parse the SBOM -----------------------------------------
-        var sbomFile = installRoot.resolve("sbom.cdx.json").toFile();
+        File sbomFile = installRoot.resolve("sbom.cdx.json").toFile();
         if (!sbomFile.exists()) {
             return SbomCheckDetails.noSbom(installRoot);
         }
 
-        var bom = new JsonParser().parse(sbomFile);
+        Bom bom = new JsonParser().parse(sbomFile);
 
         // Collect all maven components from the SBOM (flatten the two-level tree).
         // pkg:npm sub-components (e.g. HAL console JS deps) are counted separately
         // but excluded from all checks.
-        var mavenComponents = ComponentUtils.collectMavenComponents(bom.getComponents());
+        List<Component> mavenComponents = ComponentUtils.collectMavenComponents(bom.getComponents());
 
         // ---- 2. Scan the installation on disk --------------------------
-        var installedJars = new InstallationScanner(installRoot).scan();
+        List<InstalledArtifact> installedJars = new InstallationScanner(installRoot).scan();
 
         // ---- 3. Read manifest.yaml (optional) --------------------------
-        var manifest = readManifest(installRoot);
+        ChannelManifest manifest = readManifest(installRoot);
 
         // ---- Run checks ------------------------------------------------
-        var diskFileNames = installedJars.stream()
+        Set<String> diskFileNames = installedJars.stream()
                 .map(InstalledArtifact::jarFileName)
                 .collect(Collectors.toSet());
-        var parentIndex = buildParentIndex(bom.getComponents());
+        Map<String, String> parentIndex = buildParentIndex(bom.getComponents());
 
-        var cpeCheck = checkMetadataCpe(bom);
-        var sbomVsDisk = checkSbomVsDisk(mavenComponents, installedJars, installRoot);
-        var diskVsSbom = checkDiskVsSbom(installedJars, mavenComponents);
-        var sbomVsManifest = checkSbomVsManifest(mavenComponents, manifest);
-        var shadedResult = collectShadedArtifacts(mavenComponents, diskFileNames, parentIndex, manifest);
+        CheckResult cpeCheck = checkMetadataCpe(bom);
+        CheckResult sbomVsDisk = checkSbomVsDisk(mavenComponents, installedJars, installRoot);
+        CheckResult diskVsSbom = checkDiskVsSbom(installedJars, mavenComponents);
+        CheckResult sbomVsManifest = checkSbomVsManifest(mavenComponents, manifest);
+        ShadedResult shadedResult = collectShadedArtifacts(mavenComponents, diskFileNames, parentIndex, manifest);
 
-        var result = new SbomCheckResult(cpeCheck, sbomVsDisk, diskVsSbom, sbomVsManifest, false);
+        SbomCheckResult result = new SbomCheckResult(cpeCheck, sbomVsDisk, diskVsSbom, sbomVsManifest, false);
         return new SbomCheckDetails(result, installRoot, bom, mavenComponents, installedJars, manifest, shadedResult);
     }
 
@@ -212,7 +215,7 @@ public class SbomChecker {
      * {@link SbomCheckDetails#EMPTY_MANIFEST} when the file is absent.
      */
     private static ChannelManifest readManifest(Path installRoot) throws IOException {
-        var manifestPath = installRoot.resolve(".installation").resolve("manifest.yaml");
+        Path manifestPath = installRoot.resolve(".installation").resolve("manifest.yaml");
         if (!Files.exists(manifestPath)) {
             return SbomCheckDetails.EMPTY_MANIFEST;
         }
@@ -223,11 +226,11 @@ public class SbomChecker {
      * CHECK 1 — verifies that {@code metadata.component.cpe} is present and non-blank.
      */
     static CheckResult checkMetadataCpe(Bom bom) {
-        var meta = bom.getMetadata();
+        Metadata meta = bom.getMetadata();
         if (meta == null || meta.getComponent() == null) {
             return new CheckResult(List.of("No metadata.component defined in SBOM"));
         }
-        var cpe = meta.getComponent().getCpe();
+        String cpe = meta.getComponent().getCpe();
         if (cpe == null || cpe.isBlank()) {
             return new CheckResult(List.of("metadata.component.cpe is missing or blank"));
         }
@@ -239,7 +242,7 @@ public class SbomChecker {
      * parent in the SBOM component tree.
      */
     static Map<String, String> buildParentIndex(List<Component> components) {
-        var index = new java.util.LinkedHashMap<String, String>();
+        Map<String, String> index = new java.util.LinkedHashMap<>();
         parentChildPairs(components, null)
                 .forEach(e -> index.put(e.getKey(), e.getValue()));
         return index;
@@ -261,10 +264,10 @@ public class SbomChecker {
     private static CheckResult checkSbomVsDisk(
             List<Component> sbomComponents, List<InstalledArtifact> installedJars, Path installRoot) {
 
-        var diskFileNames = installedJars.stream()
+        Set<String> diskFileNames = installedJars.stream()
                 .map(InstalledArtifact::jarFileName)
                 .collect(Collectors.toSet());
-        var missing = new ArrayList<String>();
+        List<String> missing = new ArrayList<>();
 
         for (Component c : sbomComponents) {
             switch (ComponentUtils.componentKind(c)) {
@@ -276,14 +279,14 @@ public class SbomChecker {
                 });
                 case REGULAR_JAR -> {
                     if (ComponentUtils.isNonJarType(c)) break;
-                    var fatJar = FAT_JAR_NAMES.get(c.getName());
+                    String fatJar = FAT_JAR_NAMES.get(c.getName());
                     if (fatJar != null) {
                         if (!Files.exists(installRoot.resolve(fatJar))) {
                             missing.add(c.getPurl() + " [expected: " + fatJar + "]");
                         }
                         break;
                     }
-                    var expected = ComponentUtils.expectedJarFileName(c);
+                    String expected = ComponentUtils.expectedJarFileName(c);
                     if (!diskFileNames.contains(expected)) {
                         missing.add(c.getPurl() + " [expected: " + expected + "]");
                     }
@@ -296,19 +299,19 @@ public class SbomChecker {
     private static CheckResult checkDiskVsSbom(
             List<InstalledArtifact> installedJars, List<Component> sbomComponents) {
 
-        var sbomFileNames = sbomComponents.stream()
+        Set<String> sbomFileNames = sbomComponents.stream()
                 .filter(c -> ComponentUtils.componentKind(c) != ComponentKind.POM_DERIVED)
                 .filter(c -> !ComponentUtils.isNonJarType(c))
                 .map(c -> {
-                    var fatJar = FAT_JAR_NAMES.get(c.getName());
+                    String fatJar = FAT_JAR_NAMES.get(c.getName());
                     return fatJar != null
                             ? Path.of(fatJar).getFileName().toString()
                             : ComponentUtils.expectedJarFileName(c);
                 })
                 .collect(Collectors.toSet());
 
-        var reported = new HashSet<String>();
-        var undeclared = installedJars.stream()
+        Set<String> reported = new HashSet<>();
+        List<String> undeclared = installedJars.stream()
                 .map(InstalledArtifact::jarFileName)
                 .filter(name -> !sbomFileNames.contains(name))
                 .filter(name -> !GENERIC_FAT_JAR_FILENAMES.contains(name))
@@ -324,7 +327,7 @@ public class SbomChecker {
         if (manifest.getStreams().isEmpty()) {
             return new CheckResult(Collections.emptyList());
         }
-        var issues = sbomComponents.stream()
+        List<String> issues = sbomComponents.stream()
                 .filter(c -> ComponentUtils.componentKind(c) != ComponentKind.POM_DERIVED)
                 .flatMap(c -> {
                     String coord = c.getGroup() + ":" + c.getName();
@@ -350,12 +353,12 @@ public class SbomChecker {
             List<Component> allMavenComponents, Set<String> diskFileNames,
             Map<String, String> parentIndex, ChannelManifest manifest) {
 
-        var grouped = new java.util.TreeMap<String, List<String>>();
+        Map<String, List<String>> grouped = new java.util.TreeMap<>();
         allMavenComponents.stream()
                 .filter(c -> ComponentUtils.componentKind(c) == ComponentKind.POM_DERIVED)
                 .filter(c -> !diskFileNames.contains(ComponentUtils.expectedJarFileName(c)))
                 .filter(c -> {
-                    var fatJar = FAT_JAR_NAMES.get(c.getName());
+                    String fatJar = FAT_JAR_NAMES.get(c.getName());
                     return fatJar == null || !diskFileNames.contains(Path.of(fatJar).getFileName().toString());
                 })
                 .filter(c -> manifest.findStreamFor(c.getGroup(), c.getName())
@@ -363,7 +366,7 @@ public class SbomChecker {
                         .map(v -> !v.equals(c.getVersion()))
                         .orElse(true))
                 .forEach(c -> {
-                    var parent = parentIndex.getOrDefault(c.getPurl(), "(no parent)");
+                    String parent = parentIndex.getOrDefault(c.getPurl(), "(no parent)");
                     grouped.computeIfAbsent(parent, k -> new ArrayList<>()).add(c.getPurl());
                 });
         grouped.values().forEach(Collections::sort);
@@ -375,11 +378,11 @@ public class SbomChecker {
     // -----------------------------------------------------------------------
 
     private static void unzip(Path zipFile, Path targetDir) throws IOException {
-        try (var zf = new ZipFile(zipFile.toFile())) {
-            var entries = zf.entries();
+        try (ZipFile zf = new ZipFile(zipFile.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zf.entries();
             while (entries.hasMoreElements()) {
-                var entry = (ZipEntry) entries.nextElement();
-                var entryPath = targetDir.resolve(entry.getName()).normalize();
+                ZipEntry entry = entries.nextElement();
+                Path entryPath = targetDir.resolve(entry.getName()).normalize();
                 if (!entryPath.startsWith(targetDir)) {
                     throw new IOException("ZIP entry outside target directory: " + entry.getName());
                 }
@@ -397,7 +400,7 @@ public class SbomChecker {
 
     private static void deleteRecursively(Path dir) throws IOException {
         if (!Files.exists(dir)) return;
-        try (var walk = Files.walk(dir)) {
+        try (Stream<Path> walk = Files.walk(dir)) {
             walk.sorted(java.util.Comparator.reverseOrder())
                     .forEach(p -> {
                         try { Files.delete(p); } catch (IOException ignored) {}

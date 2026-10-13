@@ -4,6 +4,7 @@
  */
 package org.wildfly.qa.tooling.sbom.print;
 
+import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
 import org.wildfly.channel.ChannelManifest;
 import org.wildfly.channel.Stream;
@@ -12,12 +13,16 @@ import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
 import org.wildfly.qa.tooling.sbom.result.BootableJarCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.CheckResult;
 import org.wildfly.qa.tooling.sbom.result.SbomCheckDetails;
+import org.wildfly.qa.tooling.sbom.result.SbomCheckResult;
+import org.wildfly.qa.tooling.sbom.result.ShadedResult;
+import org.wildfly.qa.tooling.sbom.scanner.InstalledArtifact;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -68,12 +73,12 @@ public final class SbomPrinter {
         print(bootableDetails.innerResult(), out);
 
         out.println("╠═ CPE CROSS-CHECK");
-        var cpe = bootableDetails.getCpe();
+        String cpe = bootableDetails.getCpe();
         if (cpe != null) {
             out.println("║  OK – CPEs match: " + cpe);
         } else {
-            var outerCpe = bootableDetails.outerResult().getCpe();
-            var innerCpe = bootableDetails.innerResult().getCpe();
+            String outerCpe = bootableDetails.outerResult().getCpe();
+            String innerCpe = bootableDetails.innerResult().getCpe();
             out.println("║  FAILED");
             out.println("║    outer : " + (outerCpe != null ? outerCpe : "(none)"));
             out.println("║    inner : " + (innerCpe != null ? innerCpe : "(none)"));
@@ -94,24 +99,24 @@ public final class SbomPrinter {
             return;
         }
 
-        var bom = details.bom();
-        var mavenComponents = details.mavenComponents();
-        var installedJars = details.installedJars();
-        var manifest = details.manifest();
-        var shadedResult = details.shadedResult();
-        var result = details.result();
+        Bom bom = details.bom();
+        List<Component> mavenComponents = details.mavenComponents();
+        List<InstalledArtifact> installedJars = details.installedJars();
+        ChannelManifest manifest = details.manifest();
+        ShadedResult shadedResult = details.shadedResult();
+        SbomCheckResult result = details.result();
 
         out.println("Installation root : " + details.installRoot());
-        var sbomSizeKb = details.installRoot().resolve("sbom.cdx.json").toFile().length() / 1024;
+        long sbomSizeKb = details.installRoot().resolve("sbom.cdx.json").toFile().length() / 1024;
         out.println("SBOM format      : " + bom.getBomFormat() + " " + bom.getSpecVersion()
                 + " (" + sbomSizeKb + " KB)");
 
         if (bom.getMetadata() != null && bom.getMetadata().getComponent() != null) {
-            var product = bom.getMetadata().getComponent();
+            Component product = bom.getMetadata().getComponent();
             out.println("Product          : " + product.getName() + " " + product.getVersion());
         }
 
-        var sbomAnnotation = buildSbomAnnotation(mavenComponents, manifest);
+        String sbomAnnotation = buildSbomAnnotation(mavenComponents, manifest);
         out.println("Maven components in SBOM : " + mavenComponents.size() + sbomAnnotation);
         out.println("JARs found on disk       : " + installedJars.size());
         out.println("Manifest entries         : "
@@ -147,17 +152,17 @@ public final class SbomPrinter {
 
     private static String buildSbomAnnotation(List<Component> mavenComponents, ChannelManifest manifest) {
         if (manifest.getStreams().isEmpty()) return "";
-        var notPresent = mavenComponents.stream()
+        long notPresent = mavenComponents.stream()
                 .filter(c -> manifest.findStreamFor(c.getGroup(), c.getName()).isEmpty())
                 .count();
-        var wrongVersion = mavenComponents.stream()
+        long wrongVersion = mavenComponents.stream()
                 .filter(c -> manifest.findStreamFor(c.getGroup(), c.getName())
                         .map(Stream::getVersion)
                         .map(v -> !v.equals(c.getVersion()))
                         .orElse(false))
                 .count();
         if (notPresent == 0 && wrongVersion == 0) return "";
-        var parts = new ArrayList<String>();
+        List<String> parts = new ArrayList<>();
         if (notPresent > 0) parts.add(notPresent + " SBOM-only");
         if (wrongVersion > 0) parts.add(wrongVersion + " with multiple versions in SBOM");
         return " (" + String.join(", ", parts) + " vs manifest)";
@@ -166,7 +171,7 @@ public final class SbomPrinter {
     private static void printSbomBreakdown(
             List<Component> topLevel, List<Component> allMaven, long npm, PrintStream out) {
 
-        var genericTopNames = topLevel == null ? Collections.<String>emptyList() :
+        List<String> genericTopNames = topLevel == null ? Collections.<String>emptyList() :
                 topLevel.stream()
                         .filter(c -> c.getPurl() != null && c.getPurl().startsWith("pkg:generic/"))
                         .map(Component::getName)
@@ -174,15 +179,15 @@ public final class SbomPrinter {
                         .collect(Collectors.toList());
 
         long nativeLib = 0, pomDerived = 0, nonJarType = 0, installable = 0;
-        for (var c : allMaven) {
-            var k = ComponentUtils.componentKind(c);
+        for (Component c : allMaven) {
+            ComponentKind k = ComponentUtils.componentKind(c);
             if      (k == ComponentKind.NATIVE_LIB)  nativeLib++;
             else if (k == ComponentKind.POM_DERIVED)  pomDerived++;
             else if (ComponentUtils.isNonJarType(c))  nonJarType++;
             else                                       installable++;
         }
 
-        var total = genericTopNames.size() + allMaven.size() + npm;
+        long total = genericTopNames.size() + allMaven.size() + npm;
         out.println("┌─ SBOM entry breakdown");
         out.printf("│  Total entries                                : %4d%n", total);
         out.printf("│  Bundled fat JARs (no version on disk)        : %4d (%s)%n",
@@ -202,12 +207,12 @@ public final class SbomPrinter {
         if (byParentPurl.isEmpty()) {
             out.println("│  (none)");
         } else {
-            var total = byParentPurl.values().stream().mapToInt(List::size).sum();
+            int total = byParentPurl.values().stream().mapToInt(List::size).sum();
             out.println("│  " + total + " artifact(s) in " + byParentPurl.size() + " group(s):");
             byParentPurl.forEach((parent, children) -> {
                 out.println("│");
                 out.println("│  ┌ " + parent);
-                for (var child : children) out.println("│  │  ℹ " + child);
+                for (String child : children) out.println("│  │  ℹ " + child);
             });
         }
         out.println();
@@ -216,35 +221,35 @@ public final class SbomPrinter {
     private static void printNotInManifest(String title, List<Component> mavenComponents,
             ChannelManifest manifest, int shadedTotal, PrintStream out) {
 
-        var sbomVersionsByGa = new java.util.LinkedHashMap<String, List<String>>();
-        for (var c : mavenComponents) {
-            var ga = c.getGroup() + ":" + c.getName();
-            var kind = ComponentUtils.componentKind(c) == ComponentKind.POM_DERIVED ? "shaded" : "installed";
+        Map<String, List<String>> sbomVersionsByGa = new java.util.LinkedHashMap<>();
+        for (Component c : mavenComponents) {
+            String ga = c.getGroup() + ":" + c.getName();
+            String kind = ComponentUtils.componentKind(c) == ComponentKind.POM_DERIVED ? "shaded" : "installed";
             sbomVersionsByGa.computeIfAbsent(ga, k -> new ArrayList<>())
                     .add(c.getVersion() + " (" + kind + ")");
         }
 
-        var notPresent = new ArrayList<String>();
-        var multiVersion = new ArrayList<String>();
+        List<String> notPresent = new ArrayList<>();
+        List<String> multiVersion = new ArrayList<>();
         int notPresentArtifacts = 0, multiVersionArtifacts = 0;
 
-        for (var entry : sbomVersionsByGa.entrySet()) {
-            var ga = entry.getKey();
-            var versions = entry.getValue();
-            var colon = ga.indexOf(':');
-            var manifestVersion = manifest.findStreamFor(ga.substring(0, colon), ga.substring(colon + 1))
+        for (Map.Entry<String, List<String>> entry : sbomVersionsByGa.entrySet()) {
+            String ga = entry.getKey();
+            List<String> versions = entry.getValue();
+            int colon = ga.indexOf(':');
+            Optional<String> manifestVersion = manifest.findStreamFor(ga.substring(0, colon), ga.substring(colon + 1))
                     .map(Stream::getVersion);
             if (manifestVersion.isEmpty()) {
-                var shadedCount = versions.stream().filter(v -> v.endsWith("(shaded)")).count();
+                long shadedCount = versions.stream().filter(v -> v.endsWith("(shaded)")).count();
                 notPresentArtifacts += (int) shadedCount;
-                var repr = versions.stream().filter(v -> v.endsWith("(installed)"))
+                String repr = versions.stream().filter(v -> v.endsWith("(installed)"))
                         .findFirst().orElse(versions.get(0));
                 notPresent.add(ga + "@" + repr.replaceAll(" \\(.*\\)", ""));
             } else {
-                var mv = manifestVersion.get();
-                var anyMismatch = versions.stream().anyMatch(v -> !v.startsWith(mv + " "));
+                String mv = manifestVersion.get();
+                boolean anyMismatch = versions.stream().anyMatch(v -> !v.startsWith(mv + " "));
                 if (anyMismatch) {
-                    var shadedMismatch = versions.stream()
+                    long shadedMismatch = versions.stream()
                             .filter(v -> v.endsWith("(shaded)") && !v.startsWith(mv + " "))
                             .count();
                     multiVersionArtifacts += (int) shadedMismatch;
@@ -258,12 +263,12 @@ public final class SbomPrinter {
         Collections.sort(notPresent);
         Collections.sort(multiVersion);
 
-        var infoTotal = notPresentArtifacts + multiVersionArtifacts;
+        int infoTotal = notPresentArtifacts + multiVersionArtifacts;
         out.println("┌─ " + title);
         if (notPresent.isEmpty() && multiVersion.isEmpty()) {
             out.println("│  (none)");
         } else {
-            var crossCheck = infoTotal == shadedTotal
+            String crossCheck = infoTotal == shadedTotal
                     ? "= " + shadedTotal + " shaded artifacts in next INFO section"
                     : "WARNING: expected " + shadedTotal + " but counted " + infoTotal;
             out.println("│  Total shaded artifacts accounted for: " + notPresentArtifacts
@@ -272,13 +277,13 @@ public final class SbomPrinter {
             out.println("│");
             if (!multiVersion.isEmpty()) {
                 out.println("│  Multiple versions in SBOM (" + multiVersion.size() + " artifact(s)):");
-                for (var e : multiVersion) out.println("│    ⚠ " + e);
+                for (String e : multiVersion) out.println("│    ⚠ " + e);
             }
             if (!notPresent.isEmpty()) {
                 if (!multiVersion.isEmpty()) out.println("│");
                 out.println("│  Not in manifest (" + notPresentArtifacts + " artifact(s) across "
                         + notPresent.size() + " group(s)):");
-                for (var e : notPresent) out.println("│    ℹ " + e);
+                for (String e : notPresent) out.println("│    ℹ " + e);
             }
         }
         out.println();
@@ -296,7 +301,7 @@ public final class SbomPrinter {
             out.println("│  OK – no issues found");
         } else {
             out.println("│  FAILED – " + result.issues().size() + " issue(s):");
-            for (var issue : result.issues()) out.println("│    • " + issue);
+            for (String issue : result.issues()) out.println("│    • " + issue);
         }
         out.println();
     }

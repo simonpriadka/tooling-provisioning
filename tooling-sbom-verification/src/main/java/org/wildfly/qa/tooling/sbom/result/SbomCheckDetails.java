@@ -6,6 +6,7 @@ package org.wildfly.qa.tooling.sbom.result;
 
 import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
+import org.cyclonedx.model.Metadata;
 import org.wildfly.channel.ChannelManifest;
 import org.wildfly.qa.tooling.sbom.scanner.InstalledArtifact;
 
@@ -83,11 +84,11 @@ public final class SbomCheckDetails {
      */
     public String getCpe() {
         if (bom == null) return null;
-        var meta = bom.getMetadata();
+        Metadata meta = bom.getMetadata();
         if (meta == null) return null;
-        var comp = meta.getComponent();
+        Component comp = meta.getComponent();
         if (comp == null) return null;
-        var cpe = comp.getCpe();
+        String cpe = comp.getCpe();
         return (cpe != null && !cpe.isBlank()) ? cpe : null;
     }
 
