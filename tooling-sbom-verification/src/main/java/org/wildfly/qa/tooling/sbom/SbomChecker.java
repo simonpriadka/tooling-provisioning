@@ -21,7 +21,6 @@ import org.wildfly.qa.tooling.sbom.result.ShadedResult;
 import org.wildfly.qa.tooling.sbom.scanner.InstalledArtifact;
 import org.wildfly.qa.tooling.sbom.scanner.InstallationScanner;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -32,9 +31,11 @@ import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -57,6 +58,18 @@ public class SbomChecker {
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------
+
+    /**
+     * {@code metadata.component.name} of community WildFly SBOMs. Community builds carry no CPE,
+     * so CHECK 1 is skipped for them; every other product must declare one.
+     */
+    static final String COMMUNITY_PRODUCT_NAME = "WildFly";
+
+    /** Name of the plain-JSON SBOM file in an installation root. */
+    static final String SBOM_FILE_NAME = "sbom.cdx.json";
+
+    /** Name of the gzipped SBOM file, as packaged by WildFly builds. */
+    static final String SBOM_GZ_FILE_NAME = SBOM_FILE_NAME + ".gz";
 
     /**
      * Maven artifacts that are installed under a fixed, unversioned filename.
@@ -172,12 +185,12 @@ public class SbomChecker {
      */
     public static SbomCheckDetails checkWithDetails(Path installRoot) throws Exception {
         // ---- 1. Parse the SBOM -----------------------------------------
-        File sbomFile = installRoot.resolve("sbom.cdx.json").toFile();
-        if (!sbomFile.exists()) {
+        Optional<Path> sbomFile = findSbomFile(installRoot);
+        if (sbomFile.isEmpty()) {
             return SbomCheckDetails.noSbom(installRoot);
         }
 
-        Bom bom = new JsonParser().parse(sbomFile);
+        Bom bom = parseSbom(sbomFile.get());
 
         // Collect all maven components from the SBOM (flatten the two-level tree).
         // pkg:npm sub-components (e.g. HAL console JS deps) are counted separately
@@ -211,6 +224,30 @@ public class SbomChecker {
     // -----------------------------------------------------------------------
 
     /**
+     * Locates the SBOM in an installation root. A plain {@code sbom.cdx.json} is preferred;
+     * otherwise {@code sbom.cdx.json.gz} (the form WildFly builds package) is used.
+     *
+     * @param installRoot directory expected to contain the SBOM
+     * @return the SBOM path, or empty if neither file exists
+     */
+    public static Optional<Path> findSbomFile(Path installRoot) {
+        Path plain = installRoot.resolve(SBOM_FILE_NAME);
+        if (Files.exists(plain)) {
+            return Optional.of(plain);
+        }
+        Path gzipped = installRoot.resolve(SBOM_GZ_FILE_NAME);
+        return Files.exists(gzipped) ? Optional.of(gzipped) : Optional.empty();
+    }
+
+    private static Bom parseSbom(Path sbomFile) throws Exception {
+        try (InputStream raw = Files.newInputStream(sbomFile);
+             InputStream in = sbomFile.getFileName().toString().endsWith(".gz")
+                     ? new GZIPInputStream(raw) : raw) {
+            return new JsonParser().parse(in);
+        }
+    }
+
+    /**
      * Reads {@code .installation/manifest.yaml}; returns
      * {@link SbomCheckDetails#EMPTY_MANIFEST} when the file is absent.
      */
@@ -224,11 +261,16 @@ public class SbomChecker {
 
     /**
      * CHECK 1 — verifies that {@code metadata.component.cpe} is present and non-blank.
+     * Skipped (passes) for community WildFly, identified by {@code metadata.component.name}
+     * equal to {@link #COMMUNITY_PRODUCT_NAME}, which carries no CPE.
      */
     static CheckResult checkMetadataCpe(Bom bom) {
         Metadata meta = bom.getMetadata();
         if (meta == null || meta.getComponent() == null) {
             return new CheckResult(List.of("No metadata.component defined in SBOM"));
+        }
+        if (COMMUNITY_PRODUCT_NAME.equals(meta.getComponent().getName())) {
+            return new CheckResult(Collections.emptyList());
         }
         String cpe = meta.getComponent().getCpe();
         if (cpe == null || cpe.isBlank()) {

@@ -45,4 +45,38 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <!--
+            Runs SbomCheckerIT against a complete WildFly installation supplied by the caller:
+                mvn verify -pl tooling-sbom-verification -Pintegration-tests -Dwildfly.home=/path/to/wildfly
+            The server is not unpacked from Maven: SBOM support is not part of a WildFly release yet, so
+            the matching snapshot only exists in a local build.
+        -->
+        <profile>
+            <id>integration-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <version>${version.surefire}</version>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <wildfly.home>${wildfly.home}</wildfly.home>
+                            </systemPropertyVariables>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
 </project>

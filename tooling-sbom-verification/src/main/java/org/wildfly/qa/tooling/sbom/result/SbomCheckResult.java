@@ -55,7 +55,8 @@ public final class SbomCheckResult {
     }
 
     /**
-     * CHECK 1 — {@code metadata.component.cpe} must be present and non-blank.
+     * CHECK 1 — {@code metadata.component.cpe} must be present and non-blank, except for community WildFly
+     * ({@code metadata.component.name} is {@code "WildFly"}), which does not need one.
      * {@link CheckResult#passed()} is {@code true} and issues are empty when no SBOM was present.
      */
     public CheckResult cpeCheck() { return cpeCheck; }

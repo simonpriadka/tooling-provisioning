@@ -16,10 +16,15 @@ import org.junit.jupiter.api.io.TempDir;
 import org.wildfly.qa.tooling.sbom.component.ComponentKind;
 import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
 import org.wildfly.qa.tooling.sbom.result.CheckResult;
+import org.wildfly.qa.tooling.sbom.result.SbomCheckDetails;
 import org.wildfly.qa.tooling.sbom.result.SbomCheckResult;
 
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -244,6 +249,52 @@ class SbomCheckerTest {
         assertFalse(result.passed());
     }
 
+    private static Bom bomWithComponent(String name, String cpe) {
+        Bom bom = new Bom();
+        Metadata meta = new Metadata();
+        Component comp = new Component();
+        comp.setName(name);
+        comp.setCpe(cpe);
+        meta.setComponent(comp);
+        bom.setMetadata(meta);
+        return bom;
+    }
+
+    @Test
+    void checkMetadataCpe_communityWildFly_noCpe_passes() {
+        CheckResult result = SbomChecker.checkMetadataCpe(bomWithComponent("WildFly", null));
+        assertTrue(result.passed());
+        assertTrue(result.issues().isEmpty());
+    }
+
+    @Test
+    void checkMetadataCpe_communityWildFly_withCpe_passes() {
+        CheckResult result = SbomChecker.checkMetadataCpe(
+                bomWithComponent("WildFly", "cpe:/a:wildfly:wildfly:42"));
+        assertTrue(result.passed());
+    }
+
+    @Test
+    void checkMetadataCpe_product_noCpe_fails() {
+        CheckResult result = SbomChecker.checkMetadataCpe(bomWithComponent("JBoss EAP", null));
+        assertFalse(result.passed());
+        assertEquals(1, result.issues().size());
+    }
+
+    @Test
+    void checkMetadataCpe_product_withCpe_passes() {
+        CheckResult result = SbomChecker.checkMetadataCpe(bomWithComponent(
+                "JBoss EAP", "cpe:/a:redhat:jboss_enterprise_application_platform:8.1"));
+        assertTrue(result.passed());
+    }
+
+    @Test
+    void checkMetadataCpe_nameMatchIsExact() {
+        // Only the exact community name is exempt; look-alikes must still declare a CPE.
+        assertFalse(SbomChecker.checkMetadataCpe(bomWithComponent("wildfly", null)).passed());
+        assertFalse(SbomChecker.checkMetadataCpe(bomWithComponent("WildFly Preview", null)).passed());
+    }
+
     // ---- check() API -------------------------------------------------------
 
     @Test
@@ -267,6 +318,58 @@ class SbomCheckerTest {
         assertNotNull(result.sbomVsManifest());
         assertTrue(result.sbomVsManifest().passed());
         assertTrue(result.sbomVsManifest().issues().isEmpty());
+    }
+
+    // ---- SBOM file discovery / gzip ----------------------------------------
+
+    private static final String MINIMAL_SBOM = """
+            {"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+             "metadata":{"component":{"type":"application","name":"WildFly",
+                         "cpe":"cpe:/a:wildfly:wildfly:42"}},
+             "components":[]}
+            """;
+
+    private static void writeGzip(Path target, String content) throws Exception {
+        try (OutputStream out = new GZIPOutputStream(Files.newOutputStream(target))) {
+            out.write(content.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    void findSbomFile_neither_isEmpty(@TempDir Path installRoot) {
+        assertTrue(SbomChecker.findSbomFile(installRoot).isEmpty());
+    }
+
+    @Test
+    void findSbomFile_prefersPlainOverGzip(@TempDir Path installRoot) throws Exception {
+        Files.writeString(installRoot.resolve("sbom.cdx.json"), MINIMAL_SBOM);
+        writeGzip(installRoot.resolve("sbom.cdx.json.gz"), MINIMAL_SBOM);
+
+        assertEquals(installRoot.resolve("sbom.cdx.json"), SbomChecker.findSbomFile(installRoot).orElseThrow());
+    }
+
+    @Test
+    void check_gzippedSbomOnly_isParsed(@TempDir Path installRoot) throws Exception {
+        writeGzip(installRoot.resolve("sbom.cdx.json.gz"), MINIMAL_SBOM);
+
+        SbomCheckDetails details = SbomChecker.checkWithDetails(installRoot);
+
+        assertFalse(details.isNoSbom());
+        assertEquals("cpe:/a:wildfly:wildfly:42", details.getCpe());
+        assertTrue(details.passed());
+    }
+
+    @Test
+    void check_plainAndGzippedSbom_yieldSameResult(@TempDir Path plainRoot, @TempDir Path gzRoot) throws Exception {
+        Files.writeString(plainRoot.resolve("sbom.cdx.json"), MINIMAL_SBOM);
+        writeGzip(gzRoot.resolve("sbom.cdx.json.gz"), MINIMAL_SBOM);
+
+        SbomCheckDetails plain = SbomChecker.checkWithDetails(plainRoot);
+        SbomCheckDetails gz = SbomChecker.checkWithDetails(gzRoot);
+
+        assertEquals(plain.getCpe(), gz.getCpe());
+        assertEquals(plain.mavenComponents().size(), gz.mavenComponents().size());
+        assertEquals(plain.passed(), gz.passed());
     }
 
     // ---- CheckResult -------------------------------------------------------

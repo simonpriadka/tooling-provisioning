@@ -8,6 +8,7 @@ import org.cyclonedx.model.Bom;
 import org.cyclonedx.model.Component;
 import org.wildfly.channel.ChannelManifest;
 import org.wildfly.channel.Stream;
+import org.wildfly.qa.tooling.sbom.SbomChecker;
 import org.wildfly.qa.tooling.sbom.component.ComponentKind;
 import org.wildfly.qa.tooling.sbom.component.ComponentUtils;
 import org.wildfly.qa.tooling.sbom.result.BootableJarCheckDetails;
@@ -107,7 +108,9 @@ public final class SbomPrinter {
         SbomCheckResult result = details.result();
 
         out.println("Installation root : " + details.installRoot());
-        long sbomSizeKb = details.installRoot().resolve("sbom.cdx.json").toFile().length() / 1024;
+        long sbomSizeKb = SbomChecker.findSbomFile(details.installRoot())
+                .map(p -> p.toFile().length() / 1024)
+                .orElse(0L);
         out.println("SBOM format      : " + bom.getBomFormat() + " " + bom.getSpecVersion()
                 + " (" + sbomSizeKb + " KB)");
 
